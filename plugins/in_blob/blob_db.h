@@ -30,7 +30,7 @@
 
 #define SQL_INSERT_FILE                                                  \
     "INSERT INTO in_blob_files (path, size, created)"                    \
-    "  VALUES ('@path', @size, @created);"
+    "  VALUES (@path, @size, @created);"
 
 #define SQL_DELETE_FILE                                                  \
     "DELETE FROM in_blob_files WHERE id=@id;"
@@ -43,6 +43,5 @@ int blob_db_close(struct flb_sqldb *db);
 int blob_db_file_exists(struct blob_ctx *ctx, char *path, uint64_t *id);
 int64_t blob_db_file_insert(struct blob_ctx *ctx, char *path, size_t size);
 int blob_db_file_delete(struct blob_ctx *ctx, uint64_t id, char *path);
-
 
 #endif

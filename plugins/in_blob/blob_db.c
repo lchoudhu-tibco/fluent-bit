@@ -138,6 +138,7 @@ int blob_db_file_exists(struct blob_ctx *ctx, char *path, uint64_t *id)
 int64_t blob_db_file_insert(struct blob_ctx *ctx, char *path, size_t size)
 {
     int ret;
+    int64_t id;
     time_t created;
 
     /* Register the file */
@@ -161,7 +162,9 @@ int64_t blob_db_file_insert(struct blob_ctx *ctx, char *path, size_t size)
     sqlite3_reset(ctx->stmt_insert_file);
 
     /* Get the database ID for this file */
-    return flb_sqldb_last_id(ctx->db);
+    id = flb_sqldb_last_id(ctx->db);
+    flb_plg_trace(ctx->ins, "db: file '%s' inserted with id=%ld", path, id);
+    return id;
 }
 
 int blob_db_file_delete(struct blob_ctx *ctx, uint64_t id, char *path)
