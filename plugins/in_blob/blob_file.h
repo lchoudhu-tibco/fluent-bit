@@ -17,14 +17,15 @@
  *  limitations under the License.
  */
 
-#ifndef FLB_INPUT_EVENT_H
-#define FLB_INPUT_EVENT_H
+#ifndef IN_BLOB_FILE_H
+#define IN_BLOB_FILE_H
 
-/* support event types by input plugins*/
+#include <fluent-bit/flb_input_plugin.h>
 
-#define FLB_INPUT_LOGS        0
-#define FLB_INPUT_METRICS     1
-#define FLB_INPUT_TRACES      2
-#define FLB_INPUT_BLOB        3
+#include "blob.h"
+
+int blob_file_append(struct blob_ctx *ctx, char *path, struct stat *st);
+void blob_file_list_remove(struct blob_file *bfile);
+void blob_file_list_remove_all(struct blob_ctx *ctx);
 
 #endif
