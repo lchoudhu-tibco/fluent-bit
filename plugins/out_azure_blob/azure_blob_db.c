@@ -56,10 +56,19 @@ static int prepare_stmts(struct flb_sqldb *db, struct flb_azure_blob *ctx)
         return -1;
     }
 
+    /* insert blob file part */
+    ret = sqlite3_prepare_v2(db->handler, SQL_INSERT_BLOB_FILE_PART, -1,
+                             &ctx->stmt_insert_file_part, NULL);
+    if (ret != SQLITE_OK) {
+        flb_plg_error(ctx->ins, "cannot prepare SQL statement: %s",
+                      SQL_INSERT_BLOB_FILE_PART);
+        return -1;
+    }
+
     return 0;
 }
 
-struct flb_sqldb *blob_db_open(struct flb_azure_blob *ctx, char *db_path)
+struct flb_sqldb *azb_db_open(struct flb_azure_blob *ctx, char *db_path)
 {
     int ret;
     struct flb_sqldb *db;
@@ -80,6 +89,20 @@ struct flb_sqldb *blob_db_open(struct flb_azure_blob *ctx, char *db_path)
         return NULL;
     }
 
+    ret = flb_sqldb_query(db, SQL_CREATE_AZURE_BLOB_PARTS, NULL, NULL);
+    if (ret != FLB_OK) {
+        flb_plg_error(ctx->ins, "cannot create database table for parts");
+        flb_sqldb_close(db);
+        return NULL;
+    }
+
+    ret = flb_sqldb_query(db, SQL_PRAGMA_FOREIGN_KEYS, NULL, NULL);
+    if (ret != FLB_OK) {
+        flb_plg_error(ctx->ins, "cannot enable foreign keys");
+        flb_sqldb_close(db);
+        return NULL;
+    }
+
     ret = prepare_stmts(db, ctx);
     if (ret == -1) {
         flb_sqldb_close(db);
@@ -89,12 +112,12 @@ struct flb_sqldb *blob_db_open(struct flb_azure_blob *ctx, char *db_path)
     return db;
 }
 
-int blob_db_close(struct flb_sqldb *db)
+int azb_db_close(struct flb_sqldb *db)
 {
     return flb_sqldb_close(db);
 }
 
-int blob_db_file_exists(struct flb_azure_blob *ctx, char *path, uint64_t *id)
+int azb_db_file_exists(struct flb_azure_blob *ctx, char *path, uint64_t *id)
 {
     int ret;
     int exists = FLB_FALSE;
@@ -121,7 +144,7 @@ int blob_db_file_exists(struct flb_azure_blob *ctx, char *path, uint64_t *id)
     return exists;
 }
 
-int64_t blob_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size)
+int64_t azb_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size)
 {
     int ret;
     int64_t id;
@@ -153,7 +176,7 @@ int64_t blob_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size)
     return id;
 }
 
-int blob_db_file_delete(struct flb_azure_blob *ctx, uint64_t id, char *path)
+int azb_db_file_delete(struct flb_azure_blob *ctx, uint64_t id, char *path)
 {
     int ret;
 
@@ -175,6 +198,33 @@ int blob_db_file_delete(struct flb_azure_blob *ctx, uint64_t id, char *path)
 
     flb_plg_debug(ctx->ins, "db: file id=%" PRIu64
                   ", path='%s' deleted from database", id, path);
+    return 0;
+}
+
+int azb_db_file_part_insert(struct flb_azure_blob *ctx, uint64_t file_id,
+                            size_t offset_start, size_t offset_end,
+                            int64_t *out_id)
+{
+    int ret;
+
+    /* Bind parameters */
+    sqlite3_bind_int64(ctx->stmt_insert_file_part, 1, file_id);
+    sqlite3_bind_int64(ctx->stmt_insert_file_part, 2, offset_start);
+    sqlite3_bind_int64(ctx->stmt_insert_file_part, 3, offset_end);
+
+    /* Run the insert */
+    ret = sqlite3_step(ctx->stmt_insert_file_part);
+    if (ret != SQLITE_DONE) {
+        sqlite3_clear_bindings(ctx->stmt_insert_file_part);
+        sqlite3_reset(ctx->stmt_insert_file_part);
+        flb_plg_error(ctx->ins, "cannot execute insert part for file_id=%" PRIu64,
+                      file_id);
+        return -1;
+    }
+
+    sqlite3_clear_bindings(ctx->stmt_insert_file_part);
+    sqlite3_reset(ctx->stmt_insert_file_part);
+
     return 0;
 }
 

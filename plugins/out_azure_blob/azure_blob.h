@@ -60,6 +60,7 @@ struct flb_azure_blob {
     flb_sds_t auth_type;
     flb_sds_t sas_token;
     flb_sds_t database_file;
+    size_t part_size;
 
     /*
      * Internal use
@@ -75,10 +76,16 @@ struct flb_azure_blob {
     size_t decoded_sk_size;           /* size of decoded shared key */
 
 #ifdef FLB_HAVE_SQLDB
+    /* database context */
     struct flb_sqldb *db;
+
+    /* files */
     sqlite3_stmt *stmt_insert_file;
     sqlite3_stmt *stmt_delete_file;
     sqlite3_stmt *stmt_get_file;
+
+    /* file parts */
+    sqlite3_stmt *stmt_insert_file_part;
 #endif
 
     /* Upstream connection */

@@ -23,6 +23,8 @@
 #include <fluent-bit/flb_output_plugin.h>
 #include "azure_blob.h"
 
+#define SQL_PRAGMA_FOREIGN_KEYS "PRAGMA foreign_keys = ON;"
+
 #define SQL_CREATE_AZURE_BLOB_FILES                                       \
     "CREATE TABLE IF NOT EXISTS out_azure_blob_files ("                   \
     "  id        INTEGER PRIMARY KEY,"                                    \
@@ -53,17 +55,21 @@
 #define SQL_GET_BLOB_FILE                                                 \
     "SELECT * from out_azure_blob_files WHERE path=@path order by id desc;"
 
-#define SQL_INSERT_BLOB_PART                                               \
+#define SQL_INSERT_BLOB_FILE_PART                                          \
     "INSERT INTO out_azure_blob_parts (file_id, offset_start, offset_end)" \
     "  VALUES (@file_id, @offset_start, @offset_end);"
 
 #define SQL_UPDATE_BLOB_PART_UPLOADED                                      \
     "UPDATE out_azure_blob_parts SET uploaded=1 WHERE id=@id;"
 
-struct flb_sqldb *blob_db_open(struct flb_azure_blob *ctx, char *db_path);
-int blob_db_close(struct flb_sqldb *db);
-int blob_db_file_exists(struct flb_azure_blob *ctx, char *path, uint64_t *id);
-int64_t blob_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size);
-int blob_db_file_delete(struct flb_azure_blob *ctx, uint64_t id, char *path);
+struct flb_sqldb *azb_db_open(struct flb_azure_blob *ctx, char *db_path);
+int azb_db_close(struct flb_sqldb *db);
+int azb_db_file_exists(struct flb_azure_blob *ctx, char *path, uint64_t *id);
+int64_t azb_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size);
+int azb_db_file_delete(struct flb_azure_blob *ctx, uint64_t id, char *path);
+
+int azb_db_file_part_insert(struct flb_azure_blob *ctx, uint64_t file_id,
+                            size_t offset_start, size_t offset_end,
+                            int64_t *out_id);
 
 #endif

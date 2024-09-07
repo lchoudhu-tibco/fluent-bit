@@ -27,6 +27,7 @@
 #include <fluent-bit/flb_base64.h>
 #include <fluent-bit/flb_sqldb.h>
 #include <fluent-bit/flb_input_blob.h>
+#include <fluent-bit/flb_log_event_decoder.h>
 
 #include <msgpack.h>
 
@@ -469,10 +470,41 @@ static int cb_azure_blob_init(struct flb_output_instance *ins,
     return 0;
 }
 
+static int blob_chunk_register_parts(struct flb_azure_blob *ctx, uint64_t file_id, size_t total_size)
+{
+    int ret;
+    int parts = 0;
+    int64_t id;
+    size_t offset_start = 0;
+    size_t offset_end = 0;
+
+    /* generate file parts */
+    while (offset_start < total_size) {
+        offset_end = offset_start + ctx->part_size;
+
+        /* do not exceed maximum size */
+        if (offset_end > total_size) {
+            offset_end = total_size;
+        }
+
+        /* insert part */
+        ret = azb_db_file_part_insert(ctx, file_id, offset_start, offset_end, &id);
+        if (ret == -1) {
+            flb_plg_error(ctx->ins, "cannot insert blob file part into database");
+            return -1;
+        }
+        offset_start = offset_end;
+        parts++;
+    }
+
+    return parts;
+}
+
 static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk *event_chunk)
 {
     int i;
-    int ret;
+    int64_t ret;
+    int64_t file_id;
     size_t size;
     size_t off = 0;
     cfl_sds_t file_path = NULL;
@@ -481,17 +513,29 @@ static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk
     msgpack_unpacked result;
     msgpack_object map;
 
-    msgpack_unpacked_init(&result);
-    while (msgpack_unpack_next(&result, event_chunk->data, event_chunk->size, &off) == MSGPACK_UNPACK_SUCCESS) {
-        map = result.data.via.array.ptr[1];
+    struct flb_log_event_decoder log_decoder;
+    struct flb_log_event         log_event;
 
+    ret = flb_log_event_decoder_init(&log_decoder,
+                                    (char *) event_chunk->data,
+                                     event_chunk->size);
+
+    if (ret != FLB_EVENT_DECODER_SUCCESS) {
+        flb_plg_error(ctx->ins,
+                    "Log event decoder initialization error : %z", ret);
+        return -1;
+
+    }
+
+    while (flb_log_event_decoder_next(&log_decoder, &log_event) == FLB_EVENT_DECODER_SUCCESS) {
+        map = *log_event.body;
         ret = flb_input_blob_file_get_info(map, &file_path, &file_size);
         if (ret == -1) {
             flb_plg_error(ctx->ins, "cannot get file info from blob record, skipping");
             continue;
         }
 
-        ret = blob_db_file_insert(ctx, file_path, file_size);
+        ret = azb_db_file_insert(ctx, file_path, file_size);
         cfl_sds_destroy(file_path);
         if (ret == -1) {
             flb_plg_error(ctx->ins, "cannot insert blob file into database: %s (size=%lu)",
@@ -500,8 +544,17 @@ static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk
             continue;
         }
 
-        msgpack_object_print(stdout, map);
-        printf("\n");
+        /* generate the parts by using the newest id created (ret) */
+        file_id = ret;
+        ret = blob_chunk_register_parts(ctx, file_id, file_size);
+        if (ret == -1) {
+            flb_plg_error(ctx->ins, "cannot register blob file '%s 'parts into database",
+                            file_path);
+            return -1;
+        }
+
+        flb_plg_debug(ctx->ins, "blob file '%s' (id=%zu) registered with %zu parts",
+                      file_path, file_id, ret);
     }
 
     return 0;
@@ -652,6 +705,11 @@ static struct flb_config_map config_map[] = {
      "Absolute path to a database file to be used to store blob files contexts"
     },
 
+    {
+     FLB_CONFIG_MAP_SIZE, "part_size", "25M",
+     0, FLB_TRUE, offsetof(struct flb_azure_blob, part_size),
+     "Size of each part when uploading blob files"
+    },
 
     /* EOF */
     {0}

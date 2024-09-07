@@ -22,6 +22,7 @@
 
 #include "azure_blob.h"
 #include "azure_blob_conf.h"
+#include "azure_blob_db.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -241,6 +242,14 @@ struct flb_azure_blob *flb_azure_blob_conf_create(struct flb_output_instance *in
     if (ctx->path) {
         if (ctx->path[flb_sds_len(ctx->path) - 1] == '/') {
             ctx->path[flb_sds_len(ctx->path) - 1] = '\0';
+        }
+    }
+
+    /* database file for blob signal handling */
+    if (ctx->database_file) {
+        ctx->db = azb_db_open(ctx, ctx->database_file);
+        if (!ctx->db) {
+            return NULL;
         }
     }
 
