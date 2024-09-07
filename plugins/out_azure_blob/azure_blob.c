@@ -25,10 +25,13 @@
 #include <fluent-bit/flb_config_map.h>
 #include <fluent-bit/flb_gzip.h>
 #include <fluent-bit/flb_base64.h>
+#include <fluent-bit/flb_sqldb.h>
+#include <fluent-bit/flb_input_blob.h>
 
 #include <msgpack.h>
 
 #include "azure_blob.h"
+#include "azure_blob_db.h"
 #include "azure_blob_uri.h"
 #include "azure_blob_conf.h"
 #include "azure_blob_appendblob.h"
@@ -64,7 +67,8 @@ static int azure_blob_format(struct flb_config *config,
 
 static int send_blob(struct flb_config *config,
                      struct flb_input_instance *i_ins,
-                     struct flb_azure_blob *ctx, char *name,
+                     struct flb_azure_blob *ctx,
+                     int blob_type, char *name,
                      char *tag, int tag_len, void *data, size_t bytes)
 {
     int ret;
@@ -465,6 +469,44 @@ static int cb_azure_blob_init(struct flb_output_instance *ins,
     return 0;
 }
 
+static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk *event_chunk)
+{
+    int i;
+    int ret;
+    size_t size;
+    size_t off = 0;
+    cfl_sds_t file_path = NULL;
+    size_t file_size;
+    struct flb_time tm;
+    msgpack_unpacked result;
+    msgpack_object map;
+
+    msgpack_unpacked_init(&result);
+    while (msgpack_unpack_next(&result, event_chunk->data, event_chunk->size, &off) == MSGPACK_UNPACK_SUCCESS) {
+        map = result.data.via.array.ptr[1];
+
+        ret = flb_input_blob_file_get_info(map, &file_path, &file_size);
+        if (ret == -1) {
+            flb_plg_error(ctx->ins, "cannot get file info from blob record, skipping");
+            continue;
+        }
+
+        ret = blob_db_file_insert(ctx, file_path, file_size);
+        cfl_sds_destroy(file_path);
+        if (ret == -1) {
+            flb_plg_error(ctx->ins, "cannot insert blob file into database: %s (size=%lu)",
+                          file_path, file_size);
+            cfl_sds_destroy(file_path);
+            continue;
+        }
+
+        msgpack_object_print(stdout, map);
+        printf("\n");
+    }
+
+    return 0;
+}
+
 static void cb_azure_blob_flush(struct flb_event_chunk *event_chunk,
                                 struct flb_output_flush *out_flush,
                                 struct flb_input_instance *i_ins,
@@ -482,20 +524,29 @@ static void cb_azure_blob_flush(struct flb_event_chunk *event_chunk,
         FLB_OUTPUT_RETURN(FLB_RETRY);
     }
 
-    ret = send_blob(config, i_ins, ctx,
-                    (char *) event_chunk->tag,  /* use tag as 'name' */
-                    (char *) event_chunk->tag, flb_sds_len(event_chunk->tag),
-                    (char *) event_chunk->data, event_chunk->size);
+    if (event_chunk->type == FLB_EVENT_TYPE_LOGS) {
+        ret = send_blob(config, i_ins, ctx,
+                        ctx->btype, /* blob type per user configuration  */
+                        (char *) event_chunk->tag,  /* use tag as 'name' */
+                        (char *) event_chunk->tag, flb_sds_len(event_chunk->tag),
+                        (char *) event_chunk->data, event_chunk->size);
 
-    if (ret == CREATE_BLOB) {
-        ret = create_blob(ctx, event_chunk->tag);
-        if (ret == FLB_OK) {
-            ret = send_blob(config, i_ins, ctx,
-                            (char *) event_chunk->tag,  /* use tag as 'name' */
-                            (char *) event_chunk->tag,
-                            flb_sds_len(event_chunk->tag),
-                            (char *) event_chunk->data, event_chunk->size);
+        if (ret == CREATE_BLOB) {
+            ret = create_blob(ctx, event_chunk->tag);
+            if (ret == FLB_OK) {
+                ret = send_blob(config, i_ins, ctx,
+                                ctx->btype, /* blob type per user configuration  */
+                                (char *) event_chunk->tag,  /* use tag as 'name' */
+
+                                (char *) event_chunk->tag,  /* use tag as 'name' */
+                                flb_sds_len(event_chunk->tag),
+                                (char *) event_chunk->data, event_chunk->size);
+            }
         }
+    }
+    else if (event_chunk->type == FLB_EVENT_TYPE_BLOBS) {
+        /* For BLOBs we create a strategy for each registered blob file */
+        ret = process_blob_chunk(ctx, event_chunk);
     }
 
     /* FLB_RETRY, FLB_OK, FLB_ERROR */
@@ -595,6 +646,13 @@ static struct flb_config_map config_map[] = {
      "Azure Blob SAS token"
     },
 
+    {
+     FLB_CONFIG_MAP_STR, "database_file", NULL,
+     0, FLB_TRUE, offsetof(struct flb_azure_blob, database_file),
+     "Absolute path to a database file to be used to store blob files contexts"
+    },
+
+
     /* EOF */
     {0}
 };
@@ -610,8 +668,9 @@ struct flb_output_plugin out_azure_blob_plugin = {
     /* Test */
     .test_formatter.callback = azure_blob_format,
 
+    .flags        = FLB_OUTPUT_NET | FLB_IO_OPT_TLS,
+    .event_type   = FLB_OUTPUT_LOGS | FLB_OUTPUT_BLOBS,
     .config_map   = config_map,
 
-    /* Plugin flags */
-    .flags          = FLB_OUTPUT_NET | FLB_IO_OPT_TLS,
+
 };

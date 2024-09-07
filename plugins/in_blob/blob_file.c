@@ -18,6 +18,8 @@
  */
 
 #include <fluent-bit/flb_input_plugin.h>
+#include <fluent-bit/flb_input_blob.h>
+
 #include <fcntl.h>
 #include <sys/stat.h>
 
@@ -27,14 +29,16 @@
 int blob_file_append(struct blob_ctx *ctx, char *path, struct stat *st)
 {
     int fd;
+    int ret;
+    uint64_t id_found;
     struct cfl_list *head;
     struct blob_file *bfile;
+    struct flb_input_instance *ins = ctx->ins;
 
     /* check if the file already exists in the linked list in memory */
     cfl_list_foreach(head, &ctx->files) {
         bfile = cfl_list_entry(head, struct blob_file, _head);
         if (strcmp(bfile->path, path) == 0) {
-            printf("file already exists ?\n");
             /* file already exists */
             return -1;
         }
@@ -43,7 +47,7 @@ int blob_file_append(struct blob_ctx *ctx, char *path, struct stat *st)
 #ifdef FLB_HAVE_SQLDB
     if (ctx->database_file) {
         /* the file was already registered, just skipt it */
-        if (blob_db_file_exists(ctx, path, NULL) == FLB_TRUE) {
+        if (blob_db_file_exists(ctx, path, &id_found) == FLB_TRUE) {
             return 0;
         }
     }
@@ -81,6 +85,11 @@ int blob_file_append(struct blob_ctx *ctx, char *path, struct stat *st)
         return -1;
     }
 #endif
+
+    ret = flb_input_blob_file_register(ctx->ins, ctx->log_encoder,
+                                       ins->tag, ins->tag_len,
+                                       bfile->path, bfile->size);
+
 
     cfl_list_add(&bfile->_head, &ctx->files);
     return 0;

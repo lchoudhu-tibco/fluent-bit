@@ -17,13 +17,20 @@
  *  limitations under the License.
  */
 
-#ifndef FLB_INPUT_EVENT_H
-#define FLB_INPUT_EVENT_H
+#ifndef FLB_INPUT_BLOB_H
+#define FLB_INPUT_BLOB_H
 
-/* support event types by input plugins */
-#define FLB_INPUT_LOGS        0
-#define FLB_INPUT_METRICS     1
-#define FLB_INPUT_TRACES      2
-#define FLB_INPUT_BLOBS       3
+#include <fluent-bit/flb_info.h>
+#include <fluent-bit/flb_input.h>
+#include <fluent-bit/flb_log_event_encoder.h>
 
+struct flb_blob_file {
+    cfl_sds_t path;
+};
+
+int flb_input_blob_file_get_info(msgpack_object map, cfl_sds_t *file_path, size_t *size);
+int flb_input_blob_file_register(struct flb_input_instance *ins,
+                                 struct flb_log_event_encoder *encoder,
+                                 const char *tag, size_t tag_len,
+                                 char *file_path, size_t size);
 #endif

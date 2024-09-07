@@ -70,6 +70,7 @@ struct flb_azure_blob *flb_azure_blob_conf_create(struct flb_output_instance *in
         return NULL;
     }
     ctx->ins = ins;
+    ctx->config = config;
 
     /* Set context */
     flb_output_set_context(ins, ctx);

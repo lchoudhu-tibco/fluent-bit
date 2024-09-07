@@ -23,6 +23,7 @@
 #include <fluent-bit/flb_output_plugin.h>
 #include <fluent-bit/flb_upstream.h>
 #include <fluent-bit/flb_sds.h>
+#include <fluent-bit/flb_sqldb.h>
 
 /* Content-Type */
 #define AZURE_BLOB_CT          "Content-Type"
@@ -58,6 +59,7 @@ struct flb_azure_blob {
     flb_sds_t date_key;
     flb_sds_t auth_type;
     flb_sds_t sas_token;
+    flb_sds_t database_file;
 
     /*
      * Internal use
@@ -72,9 +74,18 @@ struct flb_azure_blob {
     unsigned char *decoded_sk;        /* decoded shared key */
     size_t decoded_sk_size;           /* size of decoded shared key */
 
+#ifdef FLB_HAVE_SQLDB
+    struct flb_sqldb *db;
+    sqlite3_stmt *stmt_insert_file;
+    sqlite3_stmt *stmt_delete_file;
+    sqlite3_stmt *stmt_get_file;
+#endif
+
     /* Upstream connection */
     struct flb_upstream *u;
     struct flb_output_instance *ins;
+    struct flb_config *config;
+
 };
 
 #endif

@@ -40,10 +40,22 @@ struct blob_file {
 };
 
 struct blob_ctx {
+    /* collector for scan_refresh_interval */
     int coll_fd;
+
+    /*
+     * list of files that has been found and being processed: file as soon as they are found are
+     * registered with the flb_input_blob_file_register() function.
+     */
     struct cfl_list files;
+
+    /* Fluent Bit context */
     struct flb_config *config;
+
+    /* input instance */
     struct flb_input_instance *ins;
+
+    /* log encoder */
     struct flb_log_event_encoder *log_encoder;
 
     /* database */
