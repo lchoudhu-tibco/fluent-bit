@@ -59,20 +59,21 @@ static int prepare_stmts(struct flb_sqldb *db, struct blob_ctx *ctx)
 
     return 0;
 }
-static int my_special_callback(void *unused, int count, char **data, char **columns)
-{
-    int idx;
+// static int my_special_callback(void *unused, int count, char **data, char **columns)
+// {
+//     int idx;
 
-    printf("There are %d column(s)\n", count);
+//     printf("There are %d column(s)\n", count);
 
-    for (idx = 0; idx < count; idx++) {
-        printf("The data in column \"%s\" is: %s\n", columns[idx], data[idx]);
-    }
+//     for (idx = 0; idx < count; idx++) {
+//         printf("The data in column \"%s\" is: %s\n", columns[idx], data[idx]);
+//     }
 
-    printf("\n");
+//     printf("\n");
 
-    return 0;
-}
+//     return 0;
+// }
+
 struct flb_sqldb *blob_db_open(struct blob_ctx *ctx, char *db_path)
 {
     int ret;
@@ -103,9 +104,14 @@ struct flb_sqldb *blob_db_open(struct blob_ctx *ctx, char *db_path)
     return db;
 }
 
-int blob_db_close(struct flb_sqldb *db)
+int blob_db_close(struct blob_ctx *ctx)
 {
-    return flb_sqldb_close(db);
+    /* finalize prepared statements */
+    sqlite3_finalize(ctx->stmt_get_file);
+    sqlite3_finalize(ctx->stmt_insert_file);
+    sqlite3_finalize(ctx->stmt_delete_file);
+
+    return flb_sqldb_close(ctx->db);
 }
 
 int blob_db_file_exists(struct blob_ctx *ctx, char *path, uint64_t *id)

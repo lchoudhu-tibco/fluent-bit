@@ -37,7 +37,9 @@
     "CREATE TABLE IF NOT EXISTS out_azure_blob_parts ("                   \
     "  id           INTEGER PRIMARY KEY,"                                 \
     "  file_id      INTEGER NOT NULL,"                                    \
+    "  part_id      INTEGER NOT NULL,"                                    \
     "  uploaded     INTEGER DEFAULT 0,"                                   \
+    "  in_progress  INTEGER DEFAULT 0,"                                   \
     "  offset_start INTEGER,"                                             \
     "  offset_end   INTEGER,"                                             \
     "  FOREIGN KEY (file_id) REFERENCES out_azure_blob_files(id) "        \
@@ -55,21 +57,42 @@
 #define SQL_GET_BLOB_FILE                                                 \
     "SELECT * from out_azure_blob_files WHERE path=@path order by id desc;"
 
-#define SQL_INSERT_BLOB_FILE_PART                                          \
-    "INSERT INTO out_azure_blob_parts (file_id, offset_start, offset_end)" \
-    "  VALUES (@file_id, @offset_start, @offset_end);"
+#define SQL_INSERT_BLOB_FILE_PART                                                   \
+    "INSERT INTO out_azure_blob_parts (file_id, part_id, offset_start, offset_end)" \
+    "  VALUES (@file_id, @part_id, @offset_start, @offset_end);"
 
 #define SQL_UPDATE_BLOB_PART_UPLOADED                                      \
     "UPDATE out_azure_blob_parts SET uploaded=1 WHERE id=@id;"
 
+#define SQL_UPDATE_BLOB_PART_IN_PROGRESS                                   \
+    "UPDATE out_azure_blob_parts SET in_progress=@status WHERE id=@id;"
+
+/* Find the oldest files and retrieve the oldest part ready to be uploaded */
+#define SQL_GET_NEXT_BLOB_FILE_PART       \
+    "SELECT p.id, "                       \
+    "       p.file_id, "                  \
+    "       p.part_id, "                  \
+    "       p.offset_start, "             \
+    "       p.offset_end "                \
+    "FROM   out_azure_blob_parts p "      \
+    "       JOIN out_azure_blob_files f " \
+    "         ON p.file_id = f.id "       \
+    "WHERE  p.uploaded = 0 "              \
+    "       AND p.in_progress = 0 "       \
+    "ORDER  BY f.created ASC, "           \
+    "          p.part_id ASC "            \
+    "LIMIT  1;"
+
 struct flb_sqldb *azb_db_open(struct flb_azure_blob *ctx, char *db_path);
-int azb_db_close(struct flb_sqldb *db);
+int azb_db_close(struct flb_azure_blob *ctx);
 int azb_db_file_exists(struct flb_azure_blob *ctx, char *path, uint64_t *id);
 int64_t azb_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size);
 int azb_db_file_delete(struct flb_azure_blob *ctx, uint64_t id, char *path);
 
 int azb_db_file_part_insert(struct flb_azure_blob *ctx, uint64_t file_id,
+                            uint64_t part_id,
                             size_t offset_start, size_t offset_end,
                             int64_t *out_id);
+int azb_db_file_part_in_progress(struct flb_azure_blob *ctx, uint64_t part_id, int status);
 
 #endif

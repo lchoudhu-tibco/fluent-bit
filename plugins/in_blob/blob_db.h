@@ -39,7 +39,7 @@
     "SELECT * from in_blob_files WHERE path=@path order by id desc;"
 
 struct flb_sqldb *blob_db_open(struct blob_ctx *ctx, char *db_path);
-int blob_db_close(struct flb_sqldb *db);
+int blob_db_close(struct blob_ctx *ctx);
 int blob_db_file_exists(struct blob_ctx *ctx, char *path, uint64_t *id);
 int64_t blob_db_file_insert(struct blob_ctx *ctx, char *path, size_t size);
 int blob_db_file_delete(struct blob_ctx *ctx, uint64_t id, char *path);

@@ -285,5 +285,6 @@ void flb_azure_blob_conf_destroy(struct flb_azure_blob *ctx)
         flb_upstream_destroy(ctx->u);
     }
 
+    azb_db_close(ctx);
     flb_free(ctx);
 }

@@ -61,6 +61,7 @@ struct flb_azure_blob {
     flb_sds_t sas_token;
     flb_sds_t database_file;
     size_t part_size;
+    time_t upload_parts_timeout;
 
     /*
      * Internal use
@@ -76,23 +77,32 @@ struct flb_azure_blob {
     size_t decoded_sk_size;           /* size of decoded shared key */
 
 #ifdef FLB_HAVE_SQLDB
+    /*
+     * SQLite by default is not built with multi-threading enabled, and
+     * since we aim to share the database connection and prepared statements
+     * in the output workers, we need to protect the access to these
+     * resources using a mutex.
+     */
+    pthread_mutex_t db_lock;
+
     /* database context */
     struct flb_sqldb *db;
 
-    /* files */
+    /* prepared statements: files  */
     sqlite3_stmt *stmt_insert_file;
     sqlite3_stmt *stmt_delete_file;
     sqlite3_stmt *stmt_get_file;
 
-    /* file parts */
+    /* prepared statement: file parts */
     sqlite3_stmt *stmt_insert_file_part;
+    sqlite3_stmt *stmt_update_file_part_uploaded;
+    sqlite3_stmt *stmt_get_next_file_part;
 #endif
 
     /* Upstream connection */
     struct flb_upstream *u;
     struct flb_output_instance *ins;
     struct flb_config *config;
-
 };
 
 #endif

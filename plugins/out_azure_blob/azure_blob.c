@@ -41,6 +41,9 @@
 
 #define CREATE_BLOB  1337
 
+/* thread_local_storage for workers */
+FLB_TLS_DEFINE(int, worker_upload_timer_created);
+
 static int azure_blob_format(struct flb_config *config,
                              struct flb_input_instance *ins,
                              void *plugin_context,
@@ -461,6 +464,8 @@ static int cb_azure_blob_init(struct flb_output_instance *ins,
     (void) config;
     (void) data;
 
+    FLB_TLS_INIT(worker_upload_timer_created);
+
     ctx = flb_azure_blob_conf_create(ins, config);
     if (!ctx) {
         return -1;
@@ -473,7 +478,7 @@ static int cb_azure_blob_init(struct flb_output_instance *ins,
 static int blob_chunk_register_parts(struct flb_azure_blob *ctx, uint64_t file_id, size_t total_size)
 {
     int ret;
-    int parts = 0;
+    int64_t parts = 0;
     int64_t id;
     size_t offset_start = 0;
     size_t offset_end = 0;
@@ -488,7 +493,7 @@ static int blob_chunk_register_parts(struct flb_azure_blob *ctx, uint64_t file_i
         }
 
         /* insert part */
-        ret = azb_db_file_part_insert(ctx, file_id, offset_start, offset_end, &id);
+        ret = azb_db_file_part_insert(ctx, file_id, parts, offset_start, offset_end, &id);
         if (ret == -1) {
             flb_plg_error(ctx->ins, "cannot insert blob file part into database");
             return -1;
@@ -502,15 +507,10 @@ static int blob_chunk_register_parts(struct flb_azure_blob *ctx, uint64_t file_i
 
 static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk *event_chunk)
 {
-    int i;
     int64_t ret;
     int64_t file_id;
-    size_t size;
-    size_t off = 0;
     cfl_sds_t file_path = NULL;
     size_t file_size;
-    struct flb_time tm;
-    msgpack_unpacked result;
     msgpack_object map;
 
     struct flb_log_event_decoder log_decoder;
@@ -522,7 +522,7 @@ static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk
 
     if (ret != FLB_EVENT_DECODER_SUCCESS) {
         flb_plg_error(ctx->ins,
-                    "Log event decoder initialization error : %z", ret);
+                    "Log event decoder initialization error : %i", (int) ret);
         return -1;
 
     }
@@ -536,13 +536,13 @@ static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk
         }
 
         ret = azb_db_file_insert(ctx, file_path, file_size);
-        cfl_sds_destroy(file_path);
         if (ret == -1) {
             flb_plg_error(ctx->ins, "cannot insert blob file into database: %s (size=%lu)",
                           file_path, file_size);
             cfl_sds_destroy(file_path);
             continue;
         }
+        cfl_sds_destroy(file_path);
 
         /* generate the parts by using the newest id created (ret) */
         file_id = ret;
@@ -560,6 +560,33 @@ static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk
     return 0;
 }
 
+static void cb_azb_blob_file_upload(struct flb_config *config, void *out_context)
+{
+
+    flb_sched_timer_cb_coro_return();
+}
+
+static int azb_timer_create(struct flb_azure_blob *ctx)
+{
+    int ret;
+    int64_t ms;
+    struct flb_sched *sched;
+
+    sched = flb_sched_ctx_get();
+
+    /* convert from seconds to milliseconds (scheduler needs ms) */
+    ms = ctx->upload_parts_timeout * 1000;
+
+    ret = flb_sched_timer_coro_cb_create(sched, FLB_SCHED_TIMER_CB_PERM, ms,
+                                         cb_azb_blob_file_upload, ctx, NULL);
+    if (ret == -1) {
+        flb_plg_error(ctx->ins, "failed to create upload timer");
+        return -1;
+    }
+
+    return 0;
+}
+
 static void cb_azure_blob_flush(struct flb_event_chunk *event_chunk,
                                 struct flb_output_flush *out_flush,
                                 struct flb_input_instance *i_ins,
@@ -567,6 +594,7 @@ static void cb_azure_blob_flush(struct flb_event_chunk *event_chunk,
                                 struct flb_config *config)
 {
     int ret;
+    void *ptr;
     struct flb_azure_blob *ctx = out_context;
     (void) i_ins;
     (void) config;
@@ -600,6 +628,9 @@ static void cb_azure_blob_flush(struct flb_event_chunk *event_chunk,
     else if (event_chunk->type == FLB_EVENT_TYPE_BLOBS) {
         /* For BLOBs we create a strategy for each registered blob file */
         ret = process_blob_chunk(ctx, event_chunk);
+        if (ret == -1) {
+            FLB_OUTPUT_RETURN(FLB_OK);
+        }
     }
 
     /* FLB_RETRY, FLB_OK, FLB_ERROR */
@@ -615,6 +646,23 @@ static int cb_azure_blob_exit(void *data, struct flb_config *config)
     }
 
     flb_azure_blob_conf_destroy(ctx);
+    return 0;
+}
+
+/* worker initialization, used for our internal timers */
+static int cb_worker_init(void *data, struct flb_config *config)
+{
+    int ret;
+    struct flb_azure_blob *ctx = data;
+
+    flb_plg_info(ctx->ins, "initializing worker");
+
+    ret = azb_timer_create(ctx);
+    if (ret == -1) {
+        flb_plg_error(ctx->ins, "failed to create upload timer");
+        return -1;
+    }
+
     return 0;
 }
 
@@ -711,17 +759,24 @@ static struct flb_config_map config_map[] = {
      "Size of each part when uploading blob files"
     },
 
+    {
+     FLB_CONFIG_MAP_TIME, "upload_parts_timeout", "10M",
+     0, FLB_TRUE, offsetof(struct flb_azure_blob, upload_parts_timeout),
+     "Timeout to upload parts of a blob file"
+    },
+
     /* EOF */
     {0}
 };
 
 /* Plugin registration */
 struct flb_output_plugin out_azure_blob_plugin = {
-    .name         = "azure_blob",
-    .description  = "Azure Blob Storage",
-    .cb_init      = cb_azure_blob_init,
-    .cb_flush     = cb_azure_blob_flush,
-    .cb_exit      = cb_azure_blob_exit,
+    .name           = "azure_blob",
+    .description    = "Azure Blob Storage",
+    .cb_init        = cb_azure_blob_init,
+    .cb_flush       = cb_azure_blob_flush,
+    .cb_exit        = cb_azure_blob_exit,
+    .cb_worker_init = cb_worker_init,
 
     /* Test */
     .test_formatter.callback = azure_blob_format,
@@ -729,6 +784,5 @@ struct flb_output_plugin out_azure_blob_plugin = {
     .flags        = FLB_OUTPUT_NET | FLB_IO_OPT_TLS,
     .event_type   = FLB_OUTPUT_LOGS | FLB_OUTPUT_BLOBS,
     .config_map   = config_map,
-
-
+    .workers      = 1,
 };

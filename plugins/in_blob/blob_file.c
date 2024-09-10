@@ -89,7 +89,11 @@ int blob_file_append(struct blob_ctx *ctx, char *path, struct stat *st)
     ret = flb_input_blob_file_register(ctx->ins, ctx->log_encoder,
                                        ins->tag, ins->tag_len,
                                        bfile->path, bfile->size);
-
+    if (ret == -1) {
+        cfl_sds_destroy(bfile->path);
+        flb_free(bfile);
+        return -1;
+    }
 
     cfl_list_add(&bfile->_head, &ctx->files);
     return 0;

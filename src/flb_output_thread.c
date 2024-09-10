@@ -243,6 +243,11 @@ static void output_thread(void *data)
     }
     event_local.type = FLB_ENGINE_EV_OUTPUT;
 
+    if (ins->p->cb_worker_init) {
+        ret = ins->p->cb_worker_init(ins->context, ins->config);
+        printf("worker init, ret = %i\n", ret);
+    }
+
     flb_plg_info(th_ins->ins, "worker #%i started", thread_id);
 
     /* Thread event loop */

@@ -233,6 +233,8 @@ struct flb_output_plugin {
     /* Default number of worker threads */
     int workers;
 
+    int (*cb_worker_init) (void *, struct flb_config *);
+
     /* Tests */
     struct flb_test_out_formatter test_formatter;
 

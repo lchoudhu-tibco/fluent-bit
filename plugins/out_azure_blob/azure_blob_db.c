@@ -65,6 +65,49 @@ static int prepare_stmts(struct flb_sqldb *db, struct flb_azure_blob *ctx)
         return -1;
     }
 
+    /* update blob part uploaded */
+    ret = sqlite3_prepare_v2(db->handler, SQL_UPDATE_BLOB_PART_UPLOADED, -1,
+                             &ctx->stmt_update_file_part_uploaded, NULL);
+    if (ret != SQLITE_OK) {
+        flb_plg_error(ctx->ins, "cannot prepare SQL statement: %s",
+                      SQL_UPDATE_BLOB_PART_UPLOADED);
+        return -1;
+    }
+
+    ret = sqlite3_prepare_v2(db->handler, SQL_GET_NEXT_BLOB_FILE_PART, -1,
+                             &ctx->stmt_get_next_file_part, NULL);
+    if (ret != SQLITE_OK) {
+        flb_plg_error(ctx->ins, "cannot prepare SQL statement: %s",
+                      SQL_GET_NEXT_BLOB_FILE_PART);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int azb_db_lock(struct flb_azure_blob *ctx)
+{
+    int ret;
+
+    ret = pthread_mutex_lock(&ctx->db_lock);
+    if (ret != 0) {
+        flb_plg_error(ctx->ins, "cannot lock database mutex");
+        return -1;
+    }
+
+    return 0;
+}
+
+static int azb_db_unlock(struct flb_azure_blob *ctx)
+{
+    int ret;
+
+    ret = pthread_mutex_unlock(&ctx->db_lock);
+    if (ret != 0) {
+        flb_plg_error(ctx->ins, "cannot unlock database mutex");
+        return -1;
+    }
+
     return 0;
 }
 
@@ -109,18 +152,29 @@ struct flb_sqldb *azb_db_open(struct flb_azure_blob *ctx, char *db_path)
         return NULL;
     }
 
+    pthread_mutex_init(&ctx->db_lock, NULL);
     return db;
 }
 
-int azb_db_close(struct flb_sqldb *db)
+int azb_db_close(struct flb_azure_blob *ctx)
 {
-    return flb_sqldb_close(db);
+    /* finalize prepared statements */
+    sqlite3_finalize(ctx->stmt_insert_file);
+    sqlite3_finalize(ctx->stmt_delete_file);
+    sqlite3_finalize(ctx->stmt_get_file);
+    sqlite3_finalize(ctx->stmt_insert_file_part);
+    sqlite3_finalize(ctx->stmt_update_file_part_uploaded);
+    sqlite3_finalize(ctx->stmt_get_next_file_part);
+
+    return flb_sqldb_close(ctx->db);
 }
 
 int azb_db_file_exists(struct flb_azure_blob *ctx, char *path, uint64_t *id)
 {
     int ret;
     int exists = FLB_FALSE;
+
+    azb_db_lock(ctx);
 
     /* Bind parameters */
     sqlite3_bind_text(ctx->stmt_get_file, 1, path, -1, 0);
@@ -141,6 +195,8 @@ int azb_db_file_exists(struct flb_azure_blob *ctx, char *path, uint64_t *id)
     sqlite3_clear_bindings(ctx->stmt_get_file);
     sqlite3_reset(ctx->stmt_get_file);
 
+    azb_db_unlock(ctx);
+
     return exists;
 }
 
@@ -153,6 +209,8 @@ int64_t azb_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size)
     /* Register the file */
     created = time(NULL);
 
+    azb_db_lock(ctx);
+
     /* Bind parameters */
     sqlite3_bind_text(ctx->stmt_insert_file, 1, path, -1, 0);
     sqlite3_bind_int64(ctx->stmt_insert_file, 2, size);
@@ -164,6 +222,8 @@ int64_t azb_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size)
         sqlite3_clear_bindings(ctx->stmt_insert_file);
         sqlite3_reset(ctx->stmt_insert_file);
         flb_plg_error(ctx->ins, "cannot execute insert file '%s'", path);
+
+        azb_db_unlock(ctx);
         return -1;
     }
 
@@ -173,6 +233,9 @@ int64_t azb_db_file_insert(struct flb_azure_blob *ctx, char *path, size_t size)
     /* Get the database ID for this file */
     id = flb_sqldb_last_id(ctx->db);
     flb_plg_trace(ctx->ins, "db: file '%s' inserted with id=%ld", path, id);
+
+    azb_db_unlock(ctx);
+
     return id;
 }
 
@@ -180,10 +243,13 @@ int azb_db_file_delete(struct flb_azure_blob *ctx, uint64_t id, char *path)
 {
     int ret;
 
+    azb_db_lock(ctx);
+
     /* Bind parameters */
     sqlite3_bind_int64(ctx->stmt_delete_file, 1, id);
     ret = sqlite3_step(ctx->stmt_delete_file);
     if (ret != SQLITE_DONE) {
+        azb_db_unlock(ctx);
         return -1;
     }
 
@@ -193,19 +259,25 @@ int azb_db_file_delete(struct flb_azure_blob *ctx, uint64_t id, char *path)
     if (ret != SQLITE_DONE) {
         flb_plg_error(ctx->ins, "db: error deleting entry id=%" PRIu64
                       ", path='%s' from database", id, path);
+        azb_db_unlock(ctx);
         return -1;
     }
 
     flb_plg_debug(ctx->ins, "db: file id=%" PRIu64
                   ", path='%s' deleted from database", id, path);
+
+    azb_db_unlock(ctx);
     return 0;
 }
 
 int azb_db_file_part_insert(struct flb_azure_blob *ctx, uint64_t file_id,
+                            uint64_t part_id,
                             size_t offset_start, size_t offset_end,
                             int64_t *out_id)
 {
     int ret;
+
+    azb_db_lock(ctx);
 
     /* Bind parameters */
     sqlite3_bind_int64(ctx->stmt_insert_file_part, 1, file_id);
@@ -219,12 +291,43 @@ int azb_db_file_part_insert(struct flb_azure_blob *ctx, uint64_t file_id,
         sqlite3_reset(ctx->stmt_insert_file_part);
         flb_plg_error(ctx->ins, "cannot execute insert part for file_id=%" PRIu64,
                       file_id);
+
+        azb_db_unlock(ctx);
         return -1;
     }
 
     sqlite3_clear_bindings(ctx->stmt_insert_file_part);
     sqlite3_reset(ctx->stmt_insert_file_part);
 
+    azb_db_unlock(ctx);
+    return 0;
+}
+
+int azb_db_file_part_in_progress(struct flb_azure_blob *ctx, uint64_t part_id, int status)
+{
+    int ret;
+
+    azb_db_lock(ctx);
+
+    /* Bind parameters */
+    sqlite3_bind_int64(ctx->stmt_update_file_part_uploaded, 1, status);
+    sqlite3_bind_int64(ctx->stmt_update_file_part_uploaded, 2, part_id);
+
+    /* Run the update */
+    ret = sqlite3_step(ctx->stmt_update_file_part_uploaded);
+    if (ret != SQLITE_DONE) {
+        sqlite3_clear_bindings(ctx->stmt_update_file_part_uploaded);
+        sqlite3_reset(ctx->stmt_update_file_part_uploaded);
+        flb_plg_error(ctx->ins, "cannot update part id=%" PRIu64, part_id);
+
+        azb_db_unlock(ctx);
+        return -1;
+    }
+
+    sqlite3_clear_bindings(ctx->stmt_update_file_part_uploaded);
+    sqlite3_reset(ctx->stmt_update_file_part_uploaded);
+
+    azb_db_unlock(ctx);
     return 0;
 }
 
