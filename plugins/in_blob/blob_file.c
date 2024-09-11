@@ -78,6 +78,7 @@ int blob_file_append(struct blob_ctx *ctx, char *path, struct stat *st)
 
 #ifdef FLB_HAVE_SQLDB
     /* insert the entry into the database */
+    printf("INSERTING FILE INTO DATABASE: %s\n", path);
     bfile->db_id = blob_db_file_insert(ctx, path, st->st_size);
     if (bfile->db_id < 0) {
         cfl_sds_destroy(bfile->path);

@@ -207,6 +207,7 @@ static int scan_path(struct blob_ctx *ctx)
         }
     }
 
+    printf("scan found %i entries\n", globbuf.gl_pathc);
 
     /* For every entry found, generate an output list */
     for (i = 0; i < globbuf.gl_pathc; i++) {
@@ -221,6 +222,9 @@ static int scan_path(struct blob_ctx *ctx)
             if (ret == 0) {
                 flb_plg_debug(ctx->ins, "blob scan add: %s, inode %" PRIu64,
                               globbuf.gl_pathv[i], (uint64_t) st.st_ino);
+            }
+            else {
+                flb_plg_debug(ctx->ins, "blob scan skip: %s", globbuf.gl_pathv[i]);
             }
         }
         else {

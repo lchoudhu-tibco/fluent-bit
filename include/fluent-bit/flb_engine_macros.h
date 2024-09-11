@@ -30,7 +30,7 @@
 #define FLB_ENGINE_EV_THREAD        (1 << 10)                          /*  1024 */
 #define FLB_ENGINE_EV_SCHED         (1 << 11)                          /*  2048 */
 #define FLB_ENGINE_EV_SCHED_FRAME   (FLB_ENGINE_EV_SCHED | (1 << 12))  /*  2048 | 4096 = 6144  */
-#define FLB_ENGINE_EV_SCHED_CORO    (FLB_ENGINE_EV_SCHED | (1 << 13))  /*  2048 | 8192 = 10240 */
+#define FLB_ENGINE_EV_SCHED_CORO    (1 << 13)                          /*  8192 */
 
 #define FLB_ENGINE_EV_INPUT         (1 << 14)                          /*  16384 */
 #define FLB_ENGINE_EV_THREAD_INPUT  (1 << 15)                          /*  32768 */

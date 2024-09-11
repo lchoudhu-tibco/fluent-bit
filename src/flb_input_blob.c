@@ -77,7 +77,6 @@ int flb_input_blob_file_get_info(msgpack_object map, cfl_sds_t *file_path, size_
         return -1;
     }
 
-    printf("file_path: %s size: %lu\n", tmp_file_path, o.via.u64);
     *size = o.via.u64;
     *file_path = tmp_file_path;
 
@@ -173,5 +172,6 @@ int flb_input_blob_file_register(struct flb_input_instance *ins,
         return -1;
     }
 
+    flb_log_event_encoder_reset(encoder);
     return ret;
 }

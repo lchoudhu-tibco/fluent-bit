@@ -281,8 +281,9 @@ int azb_db_file_part_insert(struct flb_azure_blob *ctx, uint64_t file_id,
 
     /* Bind parameters */
     sqlite3_bind_int64(ctx->stmt_insert_file_part, 1, file_id);
-    sqlite3_bind_int64(ctx->stmt_insert_file_part, 2, offset_start);
-    sqlite3_bind_int64(ctx->stmt_insert_file_part, 3, offset_end);
+    sqlite3_bind_int64(ctx->stmt_insert_file_part, 2, part_id);
+    sqlite3_bind_int64(ctx->stmt_insert_file_part, 3, offset_start);
+    sqlite3_bind_int64(ctx->stmt_insert_file_part, 4, offset_end);
 
     /* Run the insert */
     ret = sqlite3_step(ctx->stmt_insert_file_part);
@@ -307,8 +308,6 @@ int azb_db_file_part_in_progress(struct flb_azure_blob *ctx, uint64_t part_id, i
 {
     int ret;
 
-    azb_db_lock(ctx);
-
     /* Bind parameters */
     sqlite3_bind_int64(ctx->stmt_update_file_part_uploaded, 1, status);
     sqlite3_bind_int64(ctx->stmt_update_file_part_uploaded, 2, part_id);
@@ -327,7 +326,70 @@ int azb_db_file_part_in_progress(struct flb_azure_blob *ctx, uint64_t part_id, i
     sqlite3_clear_bindings(ctx->stmt_update_file_part_uploaded);
     sqlite3_reset(ctx->stmt_update_file_part_uploaded);
 
+    return 0;
+}
+
+/*
+ * Retrieve the next part file that must be processed. Note tha this function will also lock
+ * the file into the database to avoid any concurrency issue if multi workers are in use
+ */
+int azb_db_file_part_get_next(struct flb_azure_blob *ctx,
+                              uint64_t *id, uint64_t *file_id, uint64_t *part_id,
+                              off_t *offset_start, off_t *offset_end,
+                              cfl_sds_t *file_path)
+{
+    int ret;
+    char *tmp = NULL;
+    cfl_sds_t path;
+
+    azb_db_lock(ctx);
+
+    *file_path = NULL;
+
+    /* Run the query */
+    ret = sqlite3_step(ctx->stmt_get_next_file_part);
+    if (ret == SQLITE_ROW) {
+        *id = sqlite3_column_int64(ctx->stmt_get_next_file_part, 0);
+        *file_id = sqlite3_column_int64(ctx->stmt_get_next_file_part, 1);
+        *part_id = sqlite3_column_int64(ctx->stmt_get_next_file_part, 2);
+        *offset_start = sqlite3_column_int64(ctx->stmt_get_next_file_part, 3);
+        *offset_end = sqlite3_column_int64(ctx->stmt_get_next_file_part, 4);
+        tmp = (char *) sqlite3_column_text(ctx->stmt_get_next_file_part, 5);
+    }
+    else if (ret == SQLITE_DONE) {
+        /* no records */
+        azb_db_unlock(ctx);
+        sqlite3_clear_bindings(ctx->stmt_get_next_file_part);
+        sqlite3_reset(ctx->stmt_get_next_file_part);
+        return 0;
+    }
+    else {
+        azb_db_unlock(ctx);
+        return -1;
+    }
+
+    /* lock the part */
+    ret = azb_db_file_part_in_progress(ctx, *id, 1);
+    if (ret == -1) {
+        azb_db_unlock(ctx);
+        sqlite3_clear_bindings(ctx->stmt_get_next_file_part);
+        sqlite3_reset(ctx->stmt_get_next_file_part);
+        return -1;
+    }
+
+    path = cfl_sds_create(tmp);
+
+    sqlite3_clear_bindings(ctx->stmt_get_next_file_part);
+    sqlite3_reset(ctx->stmt_get_next_file_part);
+
+    if (!path) {
+        azb_db_unlock(ctx);
+        return -1;
+    }
+
+    *file_path = path;
     azb_db_unlock(ctx);
+
     return 0;
 }
 

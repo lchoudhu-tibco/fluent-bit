@@ -161,6 +161,13 @@ struct flb_azure_blob *flb_azure_blob_conf_create(struct flb_output_instance *in
         return NULL;
     }
 
+    ctx->u_test = flb_upstream_create_url(config, "http://www.google.com:80",
+                                          FLB_IO_TCP, ins->tls);
+    if (!ctx->u_test) {
+        flb_plg_error(ctx->ins, "cannot create test upstream");
+        return NULL;
+    }
+
     /*
      * Setting up the real endpoint:
      *

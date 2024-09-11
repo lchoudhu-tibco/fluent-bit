@@ -562,6 +562,39 @@ static int process_blob_chunk(struct flb_azure_blob *ctx, struct flb_event_chunk
 
 static void cb_azb_blob_file_upload(struct flb_config *config, void *out_context)
 {
+    int ret;
+    char *out_buf;
+    size_t out_size;
+    uint64_t id;
+    uint64_t file_id;
+    uint64_t part_id;
+    off_t offset_start;
+    off_t offset_end;
+    cfl_sds_t file_path = NULL;
+    struct flb_azure_blob *ctx = out_context;
+
+    /* check for a next part file and lock it */
+    ret = azb_db_file_part_get_next(ctx, &id, &file_id, &part_id, &offset_start, &offset_end, &file_path);
+    if (ret == -1) {
+        flb_plg_error(ctx->ins, "cannot get next blob file part");
+        flb_sched_timer_cb_coro_return();
+    }
+    else if (ret == 0) {
+        flb_plg_debug(ctx->ins, "no more blob file parts to process");
+        flb_sched_timer_cb_coro_return();
+    }
+
+    /* read the file content */
+    ret = flb_utils_read_file_offset(file_path, offset_start, offset_end, &out_buf, &out_size);
+    if (ret == -1) {
+        flb_plg_error(ctx->ins, "cannot read file part %s", file_path);
+        cfl_sds_destroy(file_path);
+        flb_sched_timer_cb_coro_return();
+    }
+
+    flb_free(out_buf);
+    cfl_sds_destroy(file_path);
+
 
     flb_sched_timer_cb_coro_return();
 }
@@ -593,7 +626,7 @@ static void cb_azure_blob_flush(struct flb_event_chunk *event_chunk,
                                 void *out_context,
                                 struct flb_config *config)
 {
-    int ret;
+    int ret = FLB_OK;
     void *ptr;
     struct flb_azure_blob *ctx = out_context;
     (void) i_ins;
@@ -629,7 +662,7 @@ static void cb_azure_blob_flush(struct flb_event_chunk *event_chunk,
         /* For BLOBs we create a strategy for each registered blob file */
         ret = process_blob_chunk(ctx, event_chunk);
         if (ret == -1) {
-            FLB_OUTPUT_RETURN(FLB_OK);
+            FLB_OUTPUT_RETURN(FLB_RETRY);
         }
     }
 

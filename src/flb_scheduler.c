@@ -518,7 +518,8 @@ int flb_sched_event_handler(struct flb_config *config, struct mk_event *event)
     struct flb_sched_request *req;
     struct flb_sched_timer_coro *stc;
 
-    if (event->type & FLB_ENGINE_EV_SCHED_CORO) {
+    if (event->type == FLB_ENGINE_EV_SCHED_CORO) {
+        printf("CORO EVENT\n");
         stc = (struct flb_sched_timer_coro *) event;
         if (!stc) {
             flb_error("[sched] invalid timer coro context");
@@ -540,6 +541,9 @@ int flb_sched_event_handler(struct flb_config *config, struct mk_event *event)
             sched = flb_sched_ctx_get();
             cfl_list_del(&stc->_head);
             cfl_list_add(&stc->_head, &sched->timer_coro_list_drop);
+        }
+        else {
+            flb_error("[sched] unknown coro event operation %u", op);
         }
 
         return 0;

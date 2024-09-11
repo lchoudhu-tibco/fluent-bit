@@ -73,7 +73,8 @@
     "       p.file_id, "                  \
     "       p.part_id, "                  \
     "       p.offset_start, "             \
-    "       p.offset_end "                \
+    "       p.offset_end, "                \
+    "       f.path "                      \
     "FROM   out_azure_blob_parts p "      \
     "       JOIN out_azure_blob_files f " \
     "         ON p.file_id = f.id "       \
@@ -95,4 +96,8 @@ int azb_db_file_part_insert(struct flb_azure_blob *ctx, uint64_t file_id,
                             int64_t *out_id);
 int azb_db_file_part_in_progress(struct flb_azure_blob *ctx, uint64_t part_id, int status);
 
+int azb_db_file_part_get_next(struct flb_azure_blob *ctx,
+                              uint64_t *id, uint64_t *file_id, uint64_t *part_id,
+                              off_t *offset_start, off_t *offset_end,
+                              cfl_sds_t *file_path);
 #endif

@@ -164,11 +164,13 @@ int64_t blob_db_file_insert(struct blob_ctx *ctx, char *path, size_t size)
         return -1;
     }
 
+    /* Get the database ID for this file */
+    id = flb_sqldb_last_id(ctx->db);
+
     sqlite3_clear_bindings(ctx->stmt_insert_file);
     sqlite3_reset(ctx->stmt_insert_file);
 
-    /* Get the database ID for this file */
-    id = flb_sqldb_last_id(ctx->db);
+
     flb_plg_trace(ctx->ins, "db: file '%s' inserted with id=%ld", path, id);
     return id;
 }
