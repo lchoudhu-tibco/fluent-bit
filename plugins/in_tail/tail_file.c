@@ -841,6 +841,7 @@ static int set_file_position(struct flb_tail_config *ctx,
      */
     if (ctx->db) {
         ret = flb_tail_db_file_set(file, ctx);
+        flb_plg_info(ctx->ins, "name=%s inode=%s", file->name, file->inode);
         if (ret == 0) {
             if (file->offset > 0) {
                 ret = lseek(file->fd, file->offset, SEEK_SET);
